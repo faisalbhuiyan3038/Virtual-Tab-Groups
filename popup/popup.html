@@ -59,7 +59,18 @@
 
     <!-- Bookmarks panel -->
     <section id="bookmarksPanel" class="panel">
+      <div class="panel-header-toolbar" style="display:flex; justify-content:flex-end; padding:8px 16px;">
+        <button id="btnRefreshCollections" class="secondary-btn small" title="Sync Raindrop Collections">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:6px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+          Sync
+        </button>
+      </div>
       <div id="bookmarkTree" class="scroll-list" role="tree"></div>
+      <div id="bookmarkErrorState" class="empty-state hidden">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <p id="bookmarkErrorMessage">API Key required</p>
+        <button id="btnBookmarkOpenSettings" class="primary-btn">Open Settings</button>
+      </div>
     </section>
 
     <!-- Snapshots panel -->
@@ -160,14 +171,15 @@
     <div class="modal-backdrop"></div>
     <div class="modal-sheet modal-tall">
       <div class="modal-header">
-        <h2>Save to Folder</h2>
+        <h2>Save to Collection</h2>
         <button class="icon-btn modal-close" aria-label="Close">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
+      <div id="folderPickerError" class="modal-error hidden"></div>
       <div id="folderTree" class="modal-list scroll-list"></div>
       <div class="folder-create-row">
-        <input type="text" id="newFolderName" class="modal-input" placeholder="New folder name" autocomplete="off" />
+        <input type="text" id="newFolderName" class="modal-input" placeholder="New collection name" autocomplete="off" />
         <button id="btnCreateFolder" class="primary-btn small">Create</button>
       </div>
       <div class="modal-actions">
@@ -187,6 +199,29 @@
       <div class="modal-actions">
         <button id="btnConfirmCancel" class="secondary-btn">Cancel</button>
         <button id="btnConfirmOk" class="primary-btn danger">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Settings modal ─── -->
+  <div id="settingsModal" class="modal-overlay hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button class="icon-btn modal-close" aria-label="Close">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="settings-group">
+        <label class="settings-label" for="raindropTokenInput">Raindrop.io Test Token</label>
+        <input type="password" id="raindropTokenInput" class="modal-input" placeholder="Paste your API token here" autocomplete="off" />
+        <p class="settings-help">Get an API token from Raindrop.io &rarr; Settings &rarr; Integrations &rarr; Test Token.</p>
+        <div id="apiStatusMessage" class="status-msg hidden"></div>
+      </div>
+      <div class="modal-actions">
+        <button id="btnTestApi" class="secondary-btn">Test Connection</button>
+        <button id="btnSaveSettings" class="primary-btn">Save</button>
       </div>
     </div>
   </div>

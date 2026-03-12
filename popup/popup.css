@@ -99,25 +99,38 @@
 
 html {
   font-size: 14px;
+  width: 100%;
+  height: 100%;
 }
 
 body {
   font-family: var(--font);
   background: var(--bg-base);
   color: var(--text-primary);
-  width: 380px;
-  min-height: 540px;
-  max-height: 600px;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Desktop popup wider */
+/* Desktop popup wider and fixed size */
+@media (hover: hover) and (pointer: fine) {
+  body {
+    width: 440px;
+    height: 600px;
+    max-height: 560px; /* Chrome popup limit is often ~600px */
+  }
+}
+
+/* Alternative fallback for non-hover desktops */
 @media (min-width: 500px) {
   body {
     width: 440px;
+    height: 100vh;
+    max-height: 600px;
   }
 }
 
@@ -868,6 +881,43 @@ input {
 }
 .snapshot-actions button:hover { background: var(--bg-active); color: var(--text-primary); }
 .snapshot-actions button.delete:hover { color: var(--danger); }
+
+/* ═══════════════════════════════════════════════════
+   Settings & Errors
+   ═══════════════════════════════════════════════════ */
+.settings-group { margin-bottom: var(--space-xl); }
+.settings-label {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: var(--space-sm);
+  color: var(--text-primary);
+}
+.settings-help {
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  margin-top: -10px;
+  line-height: 1.4;
+}
+.status-msg {
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+}
+.status-msg.success { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+.status-msg.error { background: rgba(244, 63, 94, 0.1); color: var(--danger); }
+
+.modal-error {
+  background: var(--danger-soft);
+  color: var(--danger);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-md);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
 
 /* ═══════════════════════════════════════════════════
    Checkbox (general)

@@ -477,55 +477,127 @@ async function saveGroup() {
 }
 
 /* ═══════════════════════════════════════════════════
-   Folder Picker Modal (Bookmarks)
+   Settings Modal (Raindrop API)
    ═══════════════════════════════════════════════════ */
-async function openFolderPicker(defaultName = '') {
+function openSettingsModal() {
+  const modal = document.getElementById('settingsModal');
+  const input = document.getElementById('raindropTokenInput');
+  const statusEl = document.getElementById('apiStatusMessage');
+
+  input.value = state.settings.raindropApiKey || '';
+  statusEl.classList.add('hidden');
+  statusEl.className = 'status-msg hidden';
+  
+  modal.classList.remove('hidden');
+}
+
+async function testApiKey() {
+  const input = document.getElementById('raindropTokenInput');
+  const statusEl = document.getElementById('apiStatusMessage');
+  const token = input.value.trim();
+  
+  if (!token) {
+    statusEl.textContent = 'Please enter a token first.';
+    statusEl.className = 'status-msg error';
+    statusEl.classList.remove('hidden');
+    return;
+  }
+
+  // Temporarily save to test
+  await msg('updateSettings', { updates: { raindropApiKey: token } });
+  
+  try {
+    const user = await msg('checkRaindropAuth');
+    statusEl.textContent = `Connected! Logged in as ${user.fullName || user.name}`;
+    statusEl.className = 'status-msg success';
+    statusEl.classList.remove('hidden');
+    // Refresh data in background
+    if (state.activePanel === 'bookmarksPanel') renderBookmarkTree();
+  } catch (err) {
+    statusEl.textContent = `Error: Invalid token or network issue.`;
+    statusEl.className = 'status-msg error';
+    statusEl.classList.remove('hidden');
+  }
+}
+
+async function saveSettingsAction() {
+  const token = document.getElementById('raindropTokenInput').value.trim();
+  state.settings = await msg('updateSettings', { updates: { raindropApiKey: token } });
+  closeModal(document.getElementById('settingsModal'));
+  showToast('Settings saved');
+  if (state.activePanel === 'bookmarksPanel') renderBookmarkTree();
+}
+
+/* ═══════════════════════════════════════════════════
+   Folder Picker Modal (Raindrop Collections)
+   ═══════════════════════════════════════════════════ */
+async function openFolderPicker(defaultName = '', forceRefresh = false) {
+  if (!state.settings.raindropApiKey) {
+    showToast('Raindrop API Key required');
+    openSettingsModal();
+    return;
+  }
+
   const modal = document.getElementById('folderPickerModal');
   const tree = document.getElementById('folderTree');
   const newFolderInput = document.getElementById('newFolderName');
+  const errorEl = document.getElementById('folderPickerError');
+
   newFolderInput.value = defaultName;
   state.selectedFolderId = null;
+  errorEl.classList.add('hidden');
   modal.classList.remove('hidden');
 
-  // Load bookmark tree
-  const bookmarkTree = await msg('getBookmarkTree');
-  tree.innerHTML = '';
-  renderFolderTree(tree, bookmarkTree, 0);
+  // Load collections tree
+  tree.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-tertiary)">Loading collections...</div>';
+  
+  try {
+    const collectionsTree = await msg('getBookmarkTree', { forceRefresh });
+    if (collectionsTree.error === 'NO_API_KEY') throw new Error('NO_API_KEY');
+    
+    tree.innerHTML = '';
+    renderFolderTree(tree, collectionsTree, 0);
+
+    if (collectionsTree.length === 0) {
+      tree.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-tertiary)">No collections found. Create one below.</div>';
+    }
+  } catch (err) {
+    tree.innerHTML = '';
+    errorEl.textContent = 'Failed to load collections. Check your API key.';
+    errorEl.classList.remove('hidden');
+  }
 }
 
 function renderFolderTree(container, nodes, depth) {
-  if (!nodes) return;
+  if (!nodes || nodes.length === 0) return;
   for (const node of nodes) {
-    if (node.url) continue; // skip bookmarks, only show folders
-    if (node.children) {
-      const item = document.createElement('div');
-      item.className = `bookmark-folder-item${state.selectedFolderId === node.id ? ' selected' : ''}`;
-      item.style.paddingLeft = `${12 + depth * 16}px`;
-      item.innerHTML = `
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-        <span class="folder-name">${escapeHtml(node.title || 'Bookmarks')}</span>
-      `;
-      item.addEventListener('click', () => {
-        state.selectedFolderId = node.id;
-        container.querySelectorAll('.bookmark-folder-item').forEach(el => el.classList.remove('selected'));
-        item.classList.add('selected');
-      });
-      container.appendChild(item);
+    const item = document.createElement('div');
+    item.className = `bookmark-folder-item${state.selectedFolderId === node.id ? ' selected' : ''}`;
+    item.style.paddingLeft = `${12 + depth * 16}px`;
+    item.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+      <span class="folder-name">${escapeHtml(node.title || 'Unsorted')}</span>
+    `;
+    item.addEventListener('click', () => {
+      state.selectedFolderId = node.id;
+      container.querySelectorAll('.bookmark-folder-item').forEach(el => el.classList.remove('selected'));
+      item.classList.add('selected');
+    });
+    container.appendChild(item);
+    
+    if (node.children?.length > 0) {
       renderFolderTree(container, node.children, depth + 1);
     }
   }
 }
 
 async function saveToSelectedFolder() {
-  if (!state.selectedFolderId) {
-    showToast('Please select a folder');
-    return;
-  }
+  const errorEl = document.getElementById('folderPickerError');
+  errorEl.classList.add('hidden');
 
   const closeTabs = document.getElementById('chkCloseSaved').checked;
   let tabs = state.pendingBookmarkTabs;
 
-  // If no pending tabs, use selected tabs
   if (tabs.length === 0) {
     tabs = [...state.selectedTabIds].map(id => state.tabs.find(t => t.id === id)).filter(Boolean);
   }
@@ -535,65 +607,115 @@ async function saveToSelectedFolder() {
     return;
   }
 
-  // Check if we need to create a new subfolder
   const newFolderName = document.getElementById('newFolderName').value.trim();
   let targetFolderId = state.selectedFolderId;
 
-  if (newFolderName) {
-    const newFolder = await msg('createBookmarkFolder', { name: newFolderName, parentId: state.selectedFolderId });
-    targetFolderId = newFolder.id;
+  try {
+    if (newFolderName) {
+      // Create new collection
+      const newFolder = await msg('createBookmarkFolder', { name: newFolderName, parentId: state.selectedFolderId });
+      targetFolderId = newFolder._id;
+    } else if (!targetFolderId) {
+      // Unsorted collection ID in Raindrop is usually 0 or -1, but let's just require a selection for now
+      throw new Error('Please select a collection or enter a new name');
+    }
+
+    const btn = document.getElementById('btnSaveToFolder');
+    btn.textContent = 'Saving...';
+    btn.disabled = true;
+
+    await msg('saveToBookmarks', {
+      tabs: tabs.map(t => ({ id: t.id, title: t.title, url: t.url })),
+      folderId: targetFolderId,
+      options: { closeTabs },
+    });
+
+    closeModal(document.getElementById('folderPickerModal'));
+    state.pendingBookmarkTabs = [];
+    exitSelectionMode();
+
+    if (closeTabs) {
+      await loadData();
+      renderTabs();
+    }
+
+    showToast(`${tabs.length} tab${tabs.length > 1 ? 's' : ''} saved to Raindrop`);
+  } catch (err) {
+    errorEl.textContent = err.message || 'Failed to save bookmarks';
+    errorEl.classList.remove('hidden');
+  } finally {
+    const btn = document.getElementById('btnSaveToFolder');
+    btn.textContent = 'Save here';
+    btn.disabled = false;
   }
-
-  await msg('saveToBookmarks', {
-    tabs: tabs.map(t => ({ id: t.id, title: t.title, url: t.url })),
-    folderId: targetFolderId,
-    options: { closeTabs },
-  });
-
-  closeModal(document.getElementById('folderPickerModal'));
-  state.pendingBookmarkTabs = [];
-  exitSelectionMode();
-
-  if (closeTabs) {
-    await loadData();
-    renderTabs();
-  }
-
-  showToast(`${tabs.length} tab${tabs.length > 1 ? 's' : ''} saved to bookmarks`);
 }
 
 async function createSubfolder() {
   const input = document.getElementById('newFolderName');
+  const errorEl = document.getElementById('folderPickerError');
+  errorEl.classList.add('hidden');
+
   const name = input.value.trim();
-  if (!name || !state.selectedFolderId) {
-    showToast('Enter a name and select a parent folder');
+  if (!name) {
+    errorEl.textContent = 'Enter a collection name';
+    errorEl.classList.remove('hidden');
     return;
   }
 
-  const newFolder = await msg('createBookmarkFolder', { name, parentId: state.selectedFolderId });
-  state.selectedFolderId = newFolder.id;
-  input.value = '';
+  try {
+    const btn = document.getElementById('btnCreateFolder');
+    btn.textContent = '...';
+    btn.disabled = true;
 
-  // Re-render tree
-  const tree = document.getElementById('folderTree');
-  const bookmarkTree = await msg('getBookmarkTree');
-  tree.innerHTML = '';
-  renderFolderTree(tree, bookmarkTree, 0);
-  showToast(`Folder "${name}" created`);
+    const newFolder = await msg('createBookmarkFolder', { name, parentId: state.selectedFolderId });
+    state.selectedFolderId = newFolder._id;
+    input.value = '';
+
+    // Re-render tree
+    const tree = document.getElementById('folderTree');
+    const collectionsTree = await msg('getBookmarkTree');
+    tree.innerHTML = '';
+    renderFolderTree(tree, collectionsTree, 0);
+    showToast(`Collection "${name}" created`);
+  } catch (err) {
+    errorEl.textContent = err.message || 'Failed to create collection';
+    errorEl.classList.remove('hidden');
+  } finally {
+    const btn = document.getElementById('btnCreateFolder');
+    btn.textContent = 'Create';
+    btn.disabled = false;
+  }
 }
 
 /* ═══════════════════════════════════════════════════
-   Bookmark Browser Panel
+   Bookmark Browser Panel (Raindrop Collections)
    ═══════════════════════════════════════════════════ */
-async function renderBookmarkTree() {
+async function renderBookmarkTree(forceRefresh = false) {
   const container = document.getElementById('bookmarkTree');
-  container.innerHTML = '';
+  const errorState = document.getElementById('bookmarkErrorState');
+  
+  errorState.classList.add('hidden');
+  container.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-tertiary)">Loading Raindrop collections...</div>';
 
   try {
-    const tree = await msg('getBookmarkTree');
+    const tree = await msg('getBookmarkTree', { forceRefresh });
+    
+    if (tree.error === 'NO_API_KEY') {
+      container.innerHTML = '';
+      errorState.classList.remove('hidden');
+      return;
+    }
+
+    container.innerHTML = '';
+    
+    // Virtual "All Bookmarks" collection? For now just render the tree
     renderBookmarkNodes(container, tree, 0);
+    
+    if (tree.length === 0) {
+      container.innerHTML = '<div class="empty-state"><p>No collections found in Raindrop.io</p></div>';
+    }
   } catch (e) {
-    container.innerHTML = '<div class="empty-state"><p>Could not load bookmarks</p></div>';
+    container.innerHTML = '<div class="empty-state"><p>Could not connect to Raindrop.io</p></div>';
   }
 }
 
@@ -604,40 +726,40 @@ function renderBookmarkNodes(container, nodes, depth) {
     el.className = 'bookmark-node';
     el.style.paddingLeft = `${8 + depth * 14}px`;
 
-    if (node.url) {
-      // Bookmark item
-      el.innerHTML = `
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>
-        <span class="bm-title">${escapeHtml(node.title || node.url)}</span>
-      `;
-      el.addEventListener('click', () => {
-        chrome.tabs.create({ url: node.url });
-      });
-    } else if (node.children) {
-      // Folder
-      const childCount = node.children.filter(c => c.url).length;
-      const folderCount = node.children.filter(c => !c.url).length;
-      el.innerHTML = `
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-        <span class="bm-title">${escapeHtml(node.title || 'Bookmarks')}</span>
-        ${childCount > 0 ? `<div class="bookmark-folder-actions">
-          <button data-folder-id="${node.id}" class="open-folder-btn">Open all (${childCount})</button>
-        </div>` : ''}
-      `;
+    // Folder
+    const childCount = node.count || 0; // Collection total item count
+    el.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+      <span class="bm-title">${escapeHtml(node.title || 'Unsorted')}</span>
+      ${childCount > 0 ? `<div class="bookmark-folder-actions">
+        <button data-folder-id="${node.id}" class="open-folder-btn">Open all (${childCount})</button>
+      </div>` : ''}
+    `;
 
-      const openBtn = el.querySelector('.open-folder-btn');
-      if (openBtn) {
-        openBtn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          const bookmarkUrls = node.children.filter(c => c.url);
-          for (const bm of bookmarkUrls) {
-            await chrome.tabs.create({ url: bm.url, active: false });
+    const openBtn = el.querySelector('.open-folder-btn');
+    if (openBtn) {
+      openBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        openBtn.textContent = 'Opening...';
+        openBtn.disabled = true;
+
+        try {
+          const raindrops = await msg('getRaindrops', { collectionId: node.id });
+          if (!raindrops || raindrops.length === 0) {
+            showToast('No links in this collection');
+            return;
           }
+
+          for (const bm of raindrops) {
+            await chrome.tabs.create({ url: bm.link, active: false });
+          }
+          
           // Create a virtual group for them
           const tabs = await msg('getTabs');
           const newTabIds = tabs
-            .filter(t => bookmarkUrls.some(b => b.url === t.url))
+            .filter(t => raindrops.some(b => b.link === t.url))
             .map(t => t.id);
+            
           if (newTabIds.length > 0) {
             await msg('createGroup', {
               name: node.title || 'Restored',
@@ -648,13 +770,18 @@ function renderBookmarkNodes(container, nodes, depth) {
           await loadData();
           switchPanel('tabsPanel');
           renderTabs();
-          showToast(`Opened ${bookmarkUrls.length} tabs from "${node.title}"`);
-        });
-      }
+          showToast(`Opened ${raindrops.length} tabs from Raindrop`);
+        } catch (err) {
+          showToast('Failed to load raindrops');
+        } finally {
+          openBtn.textContent = `Open all (${childCount})`;
+          openBtn.disabled = false;
+        }
+      });
     }
 
     container.appendChild(el);
-    if (node.children) {
+    if (node.children?.length > 0) {
       renderBookmarkNodes(container, node.children, depth + 1);
     }
   }
@@ -924,7 +1051,6 @@ function bindEvents() {
   // Overflow menu items
   document.getElementById('menuQuickSave').addEventListener('click', async () => {
     closeAllOverlays();
-    // Get the current active tab
     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (activeTab) {
       state.pendingBookmarkTabs = [activeTab];
@@ -943,6 +1069,32 @@ function bindEvents() {
   document.getElementById('menuSnapshot').addEventListener('click', async () => {
     closeAllOverlays();
     await takeSnapshotAction();
+  });
+  document.getElementById('menuSettings').addEventListener('click', () => {
+    closeAllOverlays();
+    openSettingsModal();
+  });
+
+  // Settings modal
+  document.getElementById('btnTestApi').addEventListener('click', testApiKey);
+  document.getElementById('btnSaveSettings').addEventListener('click', saveSettingsAction);
+  document.querySelector('#settingsModal .modal-close').addEventListener('click', () => {
+    closeModal(document.getElementById('settingsModal'));
+  });
+  document.querySelector('#settingsModal .modal-backdrop').addEventListener('click', () => {
+    closeModal(document.getElementById('settingsModal'));
+  });
+  document.getElementById('btnBookmarkOpenSettings').addEventListener('click', openSettingsModal);
+
+  // Sync button
+  document.getElementById('btnRefreshCollections').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const originHTML = btn.innerHTML;
+    btn.innerHTML = 'Syncing...';
+    btn.disabled = true;
+    await renderBookmarkTree(true);
+    btn.innerHTML = originHTML;
+    btn.disabled = false;
   });
 
   // Group picker modal

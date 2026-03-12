@@ -20,6 +20,8 @@ import {
   deleteSnapshot,
 } from './shared/storage.js';
 
+import * as Raindrop from './shared/raindrop.js';
+
 /* ─── Initialization ─── */
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -74,27 +76,51 @@ async function cleanupStaleTabIds() {
   }
 }
 
-/* ─── Bookmark operations ─── */
+/* ─── Bookmark operations (Raindrop) ─── */
 
-async function saveTabsToBookmarkFolder(tabs, folderId, options = {}) {
-  const { replace = false, closeTabs = false } = options;
+let cachedCollectionTree = null;
+let lastTreeFetchTime = 0;
+const TREE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-  // If replacing, remove existing children first
-  if (replace) {
-    const children = await chrome.bookmarks.getChildren(folderId);
-    for (const child of children) {
-      await chrome.bookmarks.removeTree(child.id);
+async function getFullCollectionTree(forceRefresh = false) {
+  if (!forceRefresh && cachedCollectionTree && (Date.now() - lastTreeFetchTime < TREE_CACHE_TTL)) {
+    return cachedCollectionTree;
+  }
+
+  // Fetch root and child collections, then combine into a tree
+  try {
+    const [roots, children] = await Promise.all([
+      Raindrop.getRootCollections(),
+      Raindrop.getChildCollections()
+    ]);
+
+    const buildTree = (parentId = null) => {
+      const parentNodes = parentId === null
+        ? roots.map(r => ({ ...r, id: r._id, title: r.title }))
+        : children.filter(c => c.parent?.$id === parentId).map(c => ({ ...c, id: c._id, title: c.title }));
+      
+      return parentNodes.map(node => ({
+        ...node,
+        children: buildTree(node.id)
+      }));
+    };
+
+    const tree = buildTree();
+    cachedCollectionTree = tree;
+    lastTreeFetchTime = Date.now();
+    return tree;
+  } catch (err) {
+    if (err.message === 'NO_API_KEY') {
+      return { error: 'NO_API_KEY' };
     }
+    throw err;
   }
+}
 
-  // Create bookmarks
-  for (const tab of tabs) {
-    await chrome.bookmarks.create({
-      parentId: folderId,
-      title: tab.title || tab.url,
-      url: tab.url,
-    });
-  }
+async function saveTabsToRaindrop(tabs, collectionId, options = {}) {
+  const { closeTabs = false } = options;
+
+  await Raindrop.saveBookmarks(tabs, collectionId);
 
   // Optionally close tabs
   if (closeTabs) {
@@ -103,17 +129,6 @@ async function saveTabsToBookmarkFolder(tabs, folderId, options = {}) {
       await chrome.tabs.remove(tabIds);
     }
   }
-}
-
-async function createBookmarkFolder(name, parentId) {
-  return chrome.bookmarks.create({
-    parentId: parentId || '1', // default to "Bookmarks Bar"
-    title: name,
-  });
-}
-
-async function getBookmarkTree() {
-  return chrome.bookmarks.getTree();
 }
 
 /* ─── Snapshot operations ─── */
@@ -206,16 +221,24 @@ async function handleMessage(msg) {
       return getUngroupedTabIds(tabs.map(t => t.id));
     }
 
-    /* ── Bookmarks ── */
+    /* ── Bookmarks (Raindrop) ── */
     case 'saveToBookmarks':
-      await saveTabsToBookmarkFolder(msg.tabs, msg.folderId, msg.options || {});
+      await saveTabsToRaindrop(msg.tabs, msg.folderId, msg.options || {});
       return { success: true };
 
     case 'createBookmarkFolder':
-      return createBookmarkFolder(msg.name, msg.parentId);
+      const newCollection = await Raindrop.createCollection(msg.name, msg.parentId);
+      cachedCollectionTree = null; // Clear cache on new collection
+      return newCollection;
 
     case 'getBookmarkTree':
-      return getBookmarkTree();
+      return getFullCollectionTree(msg.forceRefresh);
+
+    case 'getRaindrops':
+      return Raindrop.getBookmarks(msg.collectionId);
+
+    case 'checkRaindropAuth':
+      return Raindrop.checkAuth();
 
     /* ── Snapshots ── */
     case 'takeSnapshot':

@@ -18,6 +18,8 @@ export const DEFAULT_SETTINGS = {
   defaultSaveAction: 'keep',   // 'keep' | 'close' — after saving to bookmarks
   confirmClose: true,
   snapshotOnExit: false,
+  raindropApiKey: '',          // Raindrop.io Test Token
+  defaultCollectionId: null,   // Default collection ID for quick saves
 };
 
 export const STORAGE_KEYS = {
