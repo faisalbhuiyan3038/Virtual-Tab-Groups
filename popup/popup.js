@@ -27,6 +27,7 @@ const state = {
   selectedColor: GROUP_COLORS[0].id,
   // Bookmark target
   bookmarkTarget: 'raindrop',
+  bookmarkPanelSource: 'raindrop',
   // Long-press
   longPressTimer: null,
 };
@@ -52,6 +53,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (!isFirefox) {
     document.getElementById('btnSaveLocal').classList.remove('hidden');
     document.getElementById('menuQuickSaveLocal').classList.remove('hidden');
+    document.getElementById('bookmarkSourceSelect').style.display = 'block';
   }
 });
 
@@ -736,102 +738,150 @@ async function createSubfolder() {
 }
 
 /* ═══════════════════════════════════════════════════
-   Bookmark Browser Panel (Raindrop Collections)
+   Bookmark Browser Panel
    ═══════════════════════════════════════════════════ */
-async function renderBookmarkTree(forceRefresh = false) {
+async function renderBookmarkTree(forceRefresh = false, folderId = null, folderName = null) {
   const container = document.getElementById('bookmarkTree');
   const errorState = document.getElementById('bookmarkErrorState');
+  const source = state.bookmarkPanelSource || 'raindrop';
   
   errorState.classList.add('hidden');
-  container.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-tertiary)">Loading Raindrop collections...</div>';
+  container.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text-tertiary)">Loading ${source === 'local' ? 'Local Bookmarks' : 'Raindrop collections'}...</div>`;
 
   try {
-    const tree = await msg('getBookmarkTree', { forceRefresh });
-    
-    if (tree.error === 'NO_API_KEY') {
-      container.innerHTML = '';
-      errorState.classList.remove('hidden');
-      return;
+    let nodes = [];
+    if (source === 'raindrop') {
+      if (folderId) {
+        // Fetch full tree to extract sub-collections
+        const tree = await msg('getBookmarkTree', { forceRefresh: false });
+        const findNode = (items, id) => {
+          for (const item of items) {
+            if (String(item.id) === String(id)) return item;
+            if (item.children) {
+              const res = findNode(item.children, id);
+              if (res) return res;
+            }
+          }
+          return null;
+        };
+        const targetNode = findNode(tree, folderId);
+        const subFolders = targetNode ? (targetNode.children || []) : [];
+
+        // Fetch raindrops (bookmarks) for this collection
+        let raindrops = [];
+        try {
+          raindrops = await msg('getRaindrops', { collectionId: folderId });
+        } catch (e) {}
+        const bookmarks = raindrops.map(r => ({ id: r._id, title: r.title, url: r.link, isLink: true }));
+        
+        nodes = [...subFolders, ...bookmarks];
+      } else {
+        // Fetch root collections
+        const tree = await msg('getBookmarkTree', { forceRefresh });
+        if (tree && tree.error === 'NO_API_KEY') {
+          container.innerHTML = '';
+          errorState.classList.remove('hidden');
+          return;
+        }
+        nodes = tree; // root collections
+      }
+    } else {
+      // Local Bookmarks
+      if (folderId) {
+        // Find the specific folder nodes from tree
+        const tree = await msg('getLocalBookmarkTree');
+        const findNode = (items, id) => {
+          for (const item of items) {
+            if (String(item.id) === String(id)) return item;
+            if (item.children) {
+              const res = findNode(item.children, id);
+              if (res) return res;
+            }
+          }
+          return null;
+        };
+        const targetNode = findNode(tree, folderId);
+        // Local tree already mixes folders (with children) and bookmarks (with url) in `children`
+        nodes = targetNode ? (targetNode.children || []) : [];
+      } else {
+        nodes = await msg('getLocalBookmarkTree');
+      }
     }
 
     container.innerHTML = '';
+
+    // Render Back button if we are inside a folder
+    if (folderId) {
+      const backRow = document.createElement('div');
+      backRow.className = 'bookmark-node back-btn';
+      backRow.style.paddingLeft = '8px';
+      backRow.style.fontWeight = '500';
+      backRow.style.color = 'var(--text-primary)';
+      backRow.style.cursor = 'pointer';
+      backRow.style.paddingTop = '8px';
+      backRow.style.paddingBottom = '8px';
+      backRow.style.borderBottom = '1px solid var(--border-color)';
+      backRow.style.marginBottom = '8px';
+      backRow.innerHTML = `
+        <div style="display:flex; align-items:center;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:8px;"><path d="M15 18l-6-6 6-6"/></svg>
+          <span style="flex:1;">Back to root</span>
+        </div>
+      `;
+      backRow.addEventListener('click', () => {
+        renderBookmarkTree(false, null, null);
+      });
+      container.appendChild(backRow);
+    }
     
-    // Virtual "All Bookmarks" collection? For now just render the tree
-    renderBookmarkNodes(container, tree, 0);
+    renderBookmarkNodes(container, nodes, source);
     
-    if (tree.length === 0) {
-      container.innerHTML = '<div class="empty-state"><p>No collections found in Raindrop.io</p></div>';
+    if (!nodes || nodes.length === 0) {
+      container.innerHTML += `<div class="empty-state"><p>No items found inside.</p></div>`;
     }
   } catch (e) {
-    container.innerHTML = '<div class="empty-state"><p>Could not connect to Raindrop.io</p></div>';
+    container.innerHTML = `<div class="empty-state"><p>Could not load ${source === 'local' ? 'Local Bookmarks' : 'from Raindrop.io'}</p></div>`;
   }
 }
 
-function renderBookmarkNodes(container, nodes, depth) {
+function renderBookmarkNodes(container, nodes, source) {
   if (!nodes) return;
   for (const node of nodes) {
     const el = document.createElement('div');
     el.className = 'bookmark-node';
-    el.style.paddingLeft = `${8 + depth * 14}px`;
+    el.style.paddingLeft = '8px'; // Flat hierarchy padding
+
+    // Is it a direct bookmark link? (Chrome native or Raindrop link)
+    if (node.url || node.isLink) {
+      el.innerHTML = `
+        <div class="bookmark-link" style="display:flex; align-items:center; cursor:pointer; padding:6px 0; color:var(--text-secondary); transition:color 0.2s;" onmouseover="this.style.color='var(--text-primary)'" onmouseout="this.style.color='var(--text-secondary)'">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:8px; opacity: 0.7; flex-shrink:0;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+          <span class="bm-title" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(node.title || node.url)}">${escapeHtml(node.title || node.url)}</span>
+        </div>
+      `;
+      el.querySelector('.bookmark-link').addEventListener('click', () => {
+        chrome.tabs.create({ url: node.url, active: false });
+      });
+      container.appendChild(el);
+      continue;
+    }
 
     // Folder
-    const childCount = node.count || 0; // Collection total item count
+    const childCount = source === 'raindrop' ? (node.count || 0) : (node.children ? node.children.length : 0);
     el.innerHTML = `
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-      <span class="bm-title">${escapeHtml(node.title || 'Unsorted')}</span>
-      ${childCount > 0 ? `<div class="bookmark-folder-actions">
-        <button data-folder-id="${node.id}" class="open-folder-btn">Open all (${childCount})</button>
-      </div>` : ''}
+      <div class="bookmark-folder-row" style="display:flex; align-items:center; cursor:pointer; padding:6px 0; border-bottom: 1px solid var(--border-color);">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:8px; color: var(--primary)"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+        <span class="bm-title" style="flex:1;">${escapeHtml(node.title || 'Unsorted')}</span>
+        <svg class="folder-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" style="margin-right:4px;"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
     `;
 
-    const openBtn = el.querySelector('.open-folder-btn');
-    if (openBtn) {
-      openBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        openBtn.textContent = 'Opening...';
-        openBtn.disabled = true;
-
-        try {
-          const raindrops = await msg('getRaindrops', { collectionId: node.id });
-          if (!raindrops || raindrops.length === 0) {
-            showToast('No links in this collection');
-            return;
-          }
-
-          for (const bm of raindrops) {
-            await chrome.tabs.create({ url: bm.link, active: false });
-          }
-          
-          // Create a virtual group for them
-          const tabs = await msg('getTabs');
-          const newTabIds = tabs
-            .filter(t => raindrops.some(b => b.link === t.url))
-            .map(t => t.id);
-            
-          if (newTabIds.length > 0) {
-            await msg('createGroup', {
-              name: node.title || 'Restored',
-              color: GROUP_COLORS[Math.floor(Math.random() * GROUP_COLORS.length)].id,
-              tabIds: newTabIds,
-            });
-          }
-          await loadData();
-          switchPanel('tabsPanel');
-          renderTabs();
-          showToast(`Opened ${raindrops.length} tabs from Raindrop`);
-        } catch (err) {
-          showToast('Failed to load raindrops');
-        } finally {
-          openBtn.textContent = `Open all (${childCount})`;
-          openBtn.disabled = false;
-        }
-      });
-    }
+    // Drill down on click
+    el.querySelector('.bookmark-folder-row').addEventListener('click', async (e) => {
+      renderBookmarkTree(false, node.id, node.title || 'Unsorted');
+    });
 
     container.appendChild(el);
-    if (node.children?.length > 0) {
-      renderBookmarkNodes(container, node.children, depth + 1);
-    }
   }
 }
 
@@ -1157,6 +1207,12 @@ function bindEvents() {
     await renderBookmarkTree(true);
     btn.innerHTML = originHTML;
     btn.disabled = false;
+  });
+
+  // Source select
+  document.getElementById('bookmarkSourceSelect').addEventListener('change', (e) => {
+    state.bookmarkPanelSource = e.target.value;
+    renderBookmarkTree();
   });
 
   // Group picker modal

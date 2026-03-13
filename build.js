@@ -20,6 +20,10 @@ const htmlFiles = [
     'data_management.html'
 ];
 
+const cssFiles = [
+    'popup/popup.css'
+];
+
 async function build() {
     // Clean dist folder
     console.log('🧹 Cleaning dist folder...');
@@ -40,6 +44,22 @@ async function build() {
                 minifySyntax: true,
                 target: ['chrome100'],
                 format: 'esm',
+            });
+            console.log(`   ✓ ${file}`);
+        } else {
+            console.log(`   ⚠ ${file} not found, skipping...`);
+        }
+    }
+
+    // Minify CSS files with esbuild
+    console.log('🎨 Minifying CSS...');
+    for (const file of cssFiles) {
+        if (fs.existsSync(file)) {
+            await esbuild.build({
+                entryPoints: [file],
+                outfile: path.join(DIST_DIR, file),
+                bundle: false,
+                minify: true,
             });
             console.log(`   ✓ ${file}`);
         } else {
