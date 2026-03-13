@@ -6,7 +6,8 @@
   "permissions": [
     "tabs",
     "storage",
-    "favicon"
+    "favicon",
+    "bookmarks"
   ],
   "host_permissions": [
     "*://api.raindrop.io/*"

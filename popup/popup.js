@@ -5,6 +5,8 @@
 
 import { GROUP_COLORS, UNGROUPED_ID } from '../shared/constants.js';
 
+const isFirefox = navigator.userAgent.includes('Firefox');
+
 /* ═══════════════════════════════════════════════════
    State
    ═══════════════════════════════════════════════════ */
@@ -23,6 +25,8 @@ const state = {
   // Group edit
   editingGroupId: null,
   selectedColor: GROUP_COLORS[0].id,
+  // Bookmark target
+  bookmarkTarget: 'raindrop',
   // Long-press
   longPressTimer: null,
 };
@@ -44,6 +48,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderSnapshots();
   bindEvents();
   applyTheme();
+
+  if (!isFirefox) {
+    document.getElementById('btnSaveLocal').classList.remove('hidden');
+    document.getElementById('menuQuickSaveLocal').classList.remove('hidden');
+  }
 });
 
 async function loadData() {
@@ -325,8 +334,12 @@ function showGroupContextMenu(group, event) {
     </button>
     <button class="menu-item" data-action="saveGroupBookmark">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>
-      Save as bookmark folder
+      Save to Raindrop
     </button>
+    ${!isFirefox ? `<button class="menu-item" data-action="saveGroupLocal">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>
+      Save to Local Bookmarks
+    </button>` : ''}
     <button class="menu-item" data-action="selectGroupTabs">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
       Select all tabs
@@ -359,7 +372,14 @@ function showGroupContextMenu(group, event) {
         const tabs = group.tabIds.map(id => state.tabs.find(t => t.id === id)).filter(Boolean);
         if (tabs.length === 0) { showToast('No tabs in this group'); return; }
         state.pendingBookmarkTabs = tabs;
-        openFolderPicker(group.name);
+        openFolderPicker(group.name, false, 'raindrop');
+        break;
+      }
+      case 'saveGroupLocal': {
+        const tabs = group.tabIds.map(id => state.tabs.find(t => t.id === id)).filter(Boolean);
+        if (tabs.length === 0) { showToast('No tabs in this group'); return; }
+        state.pendingBookmarkTabs = tabs;
+        openFolderPicker(group.name, false, 'local');
         break;
       }
       case 'selectGroupTabs':
@@ -529,10 +549,12 @@ async function saveSettingsAction() {
 }
 
 /* ═══════════════════════════════════════════════════
-   Folder Picker Modal (Raindrop Collections)
+   Folder Picker Modal (Raindrop & Local Collections)
    ═══════════════════════════════════════════════════ */
-async function openFolderPicker(defaultName = '', forceRefresh = false) {
-  if (!state.settings.raindropApiKey) {
+async function openFolderPicker(defaultName = '', forceRefresh = false, target = 'raindrop') {
+  state.bookmarkTarget = target;
+
+  if (target === 'raindrop' && !state.settings.raindropApiKey) {
     showToast('Raindrop API Key required');
     openSettingsModal();
     return;
@@ -552,18 +574,23 @@ async function openFolderPicker(defaultName = '', forceRefresh = false) {
   tree.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-tertiary)">Loading collections...</div>';
   
   try {
-    const collectionsTree = await msg('getBookmarkTree', { forceRefresh });
-    if (collectionsTree.error === 'NO_API_KEY') throw new Error('NO_API_KEY');
+    let collectionsTree;
+    if (target === 'raindrop') {
+      collectionsTree = await msg('getBookmarkTree', { forceRefresh });
+      if (collectionsTree.error === 'NO_API_KEY') throw new Error('NO_API_KEY');
+    } else {
+      collectionsTree = await msg('getLocalBookmarkTree');
+    }
     
     tree.innerHTML = '';
     renderFolderTree(tree, collectionsTree, 0);
 
-    if (collectionsTree.length === 0) {
+    if (!collectionsTree || collectionsTree.length === 0) {
       tree.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-tertiary)">No collections found. Create one below.</div>';
     }
   } catch (err) {
     tree.innerHTML = '';
-    errorEl.textContent = 'Failed to load collections. Check your API key.';
+    errorEl.textContent = 'Failed to load collections.';
     errorEl.classList.remove('hidden');
   }
 }
@@ -571,12 +598,14 @@ async function openFolderPicker(defaultName = '', forceRefresh = false) {
 function renderFolderTree(container, nodes, depth) {
   if (!nodes || nodes.length === 0) return;
   for (const node of nodes) {
+    if (state.bookmarkTarget === 'local' && node.url) continue; // Skip pure links in Chrome bookmarks (we only want folders)
+
     const item = document.createElement('div');
     item.className = `bookmark-folder-item${state.selectedFolderId === node.id ? ' selected' : ''}`;
     item.style.paddingLeft = `${12 + depth * 16}px`;
     item.innerHTML = `
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-      <span class="folder-name">${escapeHtml(node.title || 'Unsorted')}</span>
+      <span class="folder-name">${escapeHtml(node.title || 'Unknown/Unsorted')}</span>
     `;
     item.addEventListener('click', () => {
       state.selectedFolderId = node.id;
@@ -613,8 +642,13 @@ async function saveToSelectedFolder() {
   try {
     if (newFolderName) {
       // Create new collection
-      const newFolder = await msg('createBookmarkFolder', { name: newFolderName, parentId: state.selectedFolderId });
-      targetFolderId = newFolder._id;
+      if (state.bookmarkTarget === 'raindrop') {
+        const newFolder = await msg('createBookmarkFolder', { name: newFolderName, parentId: state.selectedFolderId });
+        targetFolderId = newFolder._id;
+      } else {
+        const newFolder = await msg('createLocalBookmarkFolder', { name: newFolderName, parentId: state.selectedFolderId });
+        targetFolderId = newFolder.id;
+      }
     } else if (!targetFolderId) {
       // Unsorted collection ID in Raindrop is usually 0 or -1, but let's just require a selection for now
       throw new Error('Please select a collection or enter a new name');
@@ -624,11 +658,19 @@ async function saveToSelectedFolder() {
     btn.textContent = 'Saving...';
     btn.disabled = true;
 
-    await msg('saveToBookmarks', {
-      tabs: tabs.map(t => ({ id: t.id, title: t.title, url: t.url })),
-      folderId: targetFolderId,
-      options: { closeTabs },
-    });
+    if (state.bookmarkTarget === 'raindrop') {
+      await msg('saveToBookmarks', {
+        tabs: tabs.map(t => ({ id: t.id, title: t.title, url: t.url })),
+        folderId: targetFolderId,
+        options: { closeTabs },
+      });
+    } else {
+      await msg('saveToLocalBookmarks', {
+        tabs: tabs.map(t => ({ id: t.id, title: t.title, url: t.url })),
+        folderId: targetFolderId,
+        options: { closeTabs },
+      });
+    }
 
     closeModal(document.getElementById('folderPickerModal'));
     state.pendingBookmarkTabs = [];
@@ -639,7 +681,7 @@ async function saveToSelectedFolder() {
       renderTabs();
     }
 
-    showToast(`${tabs.length} tab${tabs.length > 1 ? 's' : ''} saved to Raindrop`);
+    showToast(`${tabs.length} tab${tabs.length > 1 ? 's' : ''} saved to ${state.bookmarkTarget === 'local' ? 'Local Bookmarks' : 'Raindrop'}`);
   } catch (err) {
     errorEl.textContent = err.message || 'Failed to save bookmarks';
     errorEl.classList.remove('hidden');
@@ -667,13 +709,19 @@ async function createSubfolder() {
     btn.textContent = '...';
     btn.disabled = true;
 
-    const newFolder = await msg('createBookmarkFolder', { name, parentId: state.selectedFolderId });
-    state.selectedFolderId = newFolder._id;
+    let newFolder;
+    if (state.bookmarkTarget === 'raindrop') {
+      newFolder = await msg('createBookmarkFolder', { name, parentId: state.selectedFolderId });
+      state.selectedFolderId = newFolder._id;
+    } else {
+      newFolder = await msg('createLocalBookmarkFolder', { name, parentId: state.selectedFolderId });
+      state.selectedFolderId = newFolder.id;
+    }
     input.value = '';
 
     // Re-render tree
     const tree = document.getElementById('folderTree');
-    const collectionsTree = await msg('getBookmarkTree');
+    const collectionsTree = await msg(state.bookmarkTarget === 'local' ? 'getLocalBookmarkTree' : 'getBookmarkTree');
     tree.innerHTML = '';
     renderFolderTree(tree, collectionsTree, 0);
     showToast(`Collection "${name}" created`);
@@ -1023,11 +1071,17 @@ function bindEvents() {
 
   // Bottom toolbar
   document.getElementById('btnAddToGroup').addEventListener('click', openGroupPicker);
+  document.getElementById('btnSaveLocal').addEventListener('click', () => {
+    const tabs = [...state.selectedTabIds].map(id => state.tabs.find(t => t.id === id)).filter(Boolean);
+    if (tabs.length === 0) return;
+    state.pendingBookmarkTabs = tabs;
+    openFolderPicker('Selected Tabs', false, 'local');
+  });
   document.getElementById('btnSaveBookmark').addEventListener('click', () => {
     const tabs = [...state.selectedTabIds].map(id => state.tabs.find(t => t.id === id)).filter(Boolean);
     if (tabs.length === 0) return;
     state.pendingBookmarkTabs = tabs;
-    openFolderPicker();
+    openFolderPicker('Selected Tabs', false, 'raindrop');
   });
   document.getElementById('btnCloseTabs').addEventListener('click', () => {
     const count = state.selectedTabIds.size;
@@ -1054,7 +1108,15 @@ function bindEvents() {
     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (activeTab) {
       state.pendingBookmarkTabs = [activeTab];
-      openFolderPicker(activeTab.title);
+      openFolderPicker(activeTab.title, false, 'raindrop');
+    }
+  });
+  document.getElementById('menuQuickSaveLocal').addEventListener('click', async () => {
+    closeAllOverlays();
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (activeTab) {
+      state.pendingBookmarkTabs = [activeTab];
+      openFolderPicker(activeTab.title, false, 'local');
     }
   });
   document.getElementById('menuAddCurrentToGroup').addEventListener('click', async () => {

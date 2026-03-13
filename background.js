@@ -131,6 +131,37 @@ async function saveTabsToRaindrop(tabs, collectionId, options = {}) {
   }
 }
 
+/* ─── Bookmark operations (Local) ─── */
+
+async function saveTabsToLocalBookmarkFolder(tabs, folderId, options = {}) {
+  const { replace = false, closeTabs = false } = options;
+
+  // If replacing, remove existing children first
+  if (replace) {
+    const children = await chrome.bookmarks.getChildren(folderId);
+    for (const child of children) {
+      await chrome.bookmarks.removeTree(child.id);
+    }
+  }
+
+  // Create bookmarks
+  for (const tab of tabs) {
+    await chrome.bookmarks.create({
+      parentId: folderId,
+      title: tab.title || tab.url,
+      url: tab.url,
+    });
+  }
+
+  // Optionally close tabs
+  if (closeTabs) {
+    const tabIds = tabs.map(t => t.id).filter(Boolean);
+    if (tabIds.length > 0) {
+      await chrome.tabs.remove(tabIds);
+    }
+  }
+}
+
 /* ─── Snapshot operations ─── */
 
 async function takeSnapshot(name) {
@@ -225,6 +256,21 @@ async function handleMessage(msg) {
     case 'saveToBookmarks':
       await saveTabsToRaindrop(msg.tabs, msg.folderId, msg.options || {});
       return { success: true };
+
+    case 'saveToLocalBookmarks':
+      await saveTabsToLocalBookmarkFolder(msg.tabs, msg.folderId, msg.options || {});
+      return { success: true };
+
+    case 'createLocalBookmarkFolder':
+      return chrome.bookmarks.create({
+        parentId: msg.parentId || '1', // default to "Bookmarks Bar"
+        title: msg.name,
+      });
+
+    case 'getLocalBookmarkTree':
+      // The native getTree returns [{ id: '0', children: [...] }], we usually want the children of root
+      const tree = await chrome.bookmarks.getTree();
+      return tree[0].children || tree;
 
     case 'createBookmarkFolder':
       const newCollection = await Raindrop.createCollection(msg.name, msg.parentId);
