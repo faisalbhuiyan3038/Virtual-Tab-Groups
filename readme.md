@@ -1,0 +1,4 @@
+- install node js.
+- run npm install
+- run node build.js
+- load extension from dist folder.

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Virtual Tab Groups",
-  "version": "1.0.0",
+  "name": "Virtual Tab Groups for Android",
+  "version": "1.0.1",
   "description": "Create virtual tab groups from open tabs and save them as bookmark folders.",
   "permissions": [
     "tabs",
@@ -32,6 +32,9 @@
     }
   },
   "background": {
+    "scripts": [
+      "background.js"
+    ],
     "service_worker": "background.js",
     "type": "module"
   },
